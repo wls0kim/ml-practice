@@ -36,48 +36,26 @@
 - caret으로 여러 머신러닝 모형을 비교하고, 랜덤 포레스트(ranger)의 부분의존도(PDP)로 주요 변수 효과 확인
 - 실행 결과: [`01_logistic_regression.md`](turnover-logistic-ml/01_logistic_regression.md), [`02_ml_model_comparison.md`](turnover-logistic-ml/02_ml_model_comparison.md), [`03_ranger_pdp.md`](turnover-logistic-ml/03_ranger_pdp.md)
 
-**로지스틱 회귀 결과** (MZ세대 응답자 4,288명)
+**로지스틱 회귀 결과**
 
-| 모형 | AUC | 정확도 | AIC |
-|---|---|---|---|
-| 기본 모형 (LASSO 선택 변수) | .788 | .728 | 4802.0 |
-| 상호작용 모형 | .792 | .729 | 4776.7 |
-| 상호작용 모형, 이상치 9개 제거 | | .731 | 4704.9 |
+![로지스틱 회귀 모형 비교](turnover-logistic-ml/figures/logistic_model_comparison.png)
 
-![ROC 곡선 비교](turnover-logistic-ml/01_logistic_regression_files/figure-gfm/unnamed-chunk-17-1.png)
+- 상호작용 항을 넣으면 AIC가 낮아지고 Hosmer-Lemeshow 검정도 유의하지 않게 되지만(p = .287), 판별력(AUC)은 거의 같음
+- 표준화 잔차와 Cook's distance 기준을 모두 넘는 이상치 9개를 제거한 뒤 재분석
 
-- 상호작용 항을 넣으면 AIC는 낮아지지만 판별력(AUC)은 거의 같음
-- 이상치 제거 후 Hosmer-Lemeshow 검정이 유의하지 않아(p = .479) 모형 적합 개선, 정확도는 Youden 지수 기준 분류점에서 계산
+**머신러닝 모형 15개 비교**
 
-**머신러닝 모형 15개 비교** (학습 3,217명, 평가 1,071명, 학습 폴드 안에서 SMOTE)
+![머신러닝 모형 비교](turnover-logistic-ml/figures/ml_model_comparison.png)
 
-| 모형 | 교차검증 ROC 평균 | 평가 정확도 (기준 .5) |
-|---|---|---|
-| ranger | .831 | .721 |
-| gbm | .825 | .711 |
-| 랜덤 포레스트(rf) | .825 | .719 |
-| XGBoost | .824 | .712 |
-| C5.0 | .820 | .723 |
-| SVM(방사형) | .815 | .721 |
-| SVM(다항) | .808 | .727 |
-| glmnet | .804 | .726 |
-| 로지스틱 회귀(glm) | .801 | .715 |
-| kNN | .745 | .627 |
+- 트리 기반 앙상블(랜덤 포레스트, GBM, XGBoost)의 교차검증 AUC가 높고, 평가 자료 정확도는 선형 모형과 큰 차이 없음 (.71~.73)
 
-![교차검증 ROC 비교](turnover-logistic-ml/02_ml_model_comparison_files/figure-gfm/unnamed-chunk-6-1.png)
+**랜덤 포레스트(ranger) 해석** (10겹 5회 반복 교차검증 AUC .828, 평가 자료 AUC .799, 정확도 .729)
 
-- 트리 기반 앙상블(ranger, gbm, rf, XGBoost)의 교차검증 ROC가 높고, 평가 자료 정확도는 선형 모형과 큰 차이 없음 (.71~.73)
-- 표에는 15개 중 10개만 표시, 전체는 실행 결과 파일 참고
+![랜덤 포레스트 변수 중요도](turnover-logistic-ml/figures/rf_variable_importance.png)
 
-**랜덤 포레스트(ranger) 결과** (학습 3,217명, 평가 1,071명)
+![부분의존도](turnover-logistic-ml/figures/rf_partial_dependence.png)
 
-- 10겹 5회 반복 교차검증 ROC .828 (mtry = 6, gini, 최소 노드 5), 평가 자료 AUC .799, 정확도 .729
-- 변수 중요도 상위: 공직 만족, 조직몰입, 보수와 인센티브, 성과관리제도, 삶의 질
-
-| 변수 중요도 상위 20개 | 공직 만족의 부분의존도 |
-|---|---|
-| ![변수 중요도](turnover-logistic-ml/03_ranger_pdp_files/figure-gfm/unnamed-chunk-5-1.png) | ![부분의존도](turnover-logistic-ml/03_ranger_pdp_files/figure-gfm/unnamed-chunk-6-1.png) |
-
-- 부분의존도의 세로축은 첫 범주(이직의도 없음)의 로짓이므로 값이 클수록 이직의도 낮음: 공직 만족 3.5점까지는 만족이 높을수록 이직의도가 낮아지고, 그 위 구간에서는 효과가 다소 줄어든 채 평평
+- 공직 만족과 조직몰입이 3점 안팎보다 낮아지면 이직의도 있음 확률이 크게 높아지고, 그 위 구간에서는 거의 평평
+- 보수와 인센티브, 성과관리제도는 같은 방향이지만 변화 폭이 작음
 
 - 이 분석의 자료로 이어 간 랜덤 포레스트와 SHAP 해석: [public-sector-turnover-shap](https://github.com/wls0kim/public-sector-turnover-shap)
