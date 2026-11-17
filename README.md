@@ -7,10 +7,10 @@
 
 | 폴더 | 수업 | 내용 | 방법 | 도구 |
 |---|---|---|---|---|
-| [2023-2_datamining-stacking](2023-2_datamining-stacking) | 데이터마이닝 (중앙대) | 분류 예측 기말 과제 | 11개 분류기 비교, 스태킹 앙상블 | R |
-| [2024-2_turnover-logistic-ml](2024-2_turnover-logistic-ml) | 회귀분석 (고려대) | MZ세대 공무원 이직의도 | 로지스틱 회귀, 상호작용, 이상치 진단, 머신러닝 비교 | R |
+| [datamining-stacking](datamining-stacking) | 데이터마이닝 (중앙대, 2023-2) | 분류 예측 기말 과제 | 11개 분류기 비교, 스태킹 앙상블 | R |
+| [turnover-logistic-ml](turnover-logistic-ml) | 회귀분석 (고려대, 2024-2) | MZ세대 공무원 이직의도 | 로지스틱 회귀, 상호작용, 이상치 진단, 머신러닝 비교 | R |
 
-## 2023-2 데이터마이닝: 스태킹 분류 모형
+## 데이터마이닝: 스태킹 분류 모형
 
 `stacking_classification.Rmd`
 
@@ -18,7 +18,7 @@
 - kNN, 나이브 베이즈, 로지스틱 회귀, GLM, Elastic Net, LDA, QDA, SVM(선형, 방사형, 다항), 랜덤 포레스트, XGBoost를 10겹 5회 반복 교차검증으로 학습해 비교
 - 개별 모형의 예측을 입력으로 쓰는 스태킹 모형을 메타 학습기 11종으로 각각 구성해 성능 비교
 
-## 2024-2 회귀분석: MZ세대 공무원 이직의도
+## 회귀분석: MZ세대 공무원 이직의도
 
 `01_logistic_regression.Rmd`, `02_ml_model_comparison.Rmd`, `03_ranger_pdp.Rmd`
 
