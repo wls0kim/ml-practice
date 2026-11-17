@@ -7,8 +7,8 @@
 
 | 폴더 | 수업 | 내용 | 방법 | 도구 |
 |---|---|---|---|---|
-| [datamining-stacking](datamining-stacking) | 데이터마이닝 (중앙대, 2023-2) | 분류 예측 기말 과제 | 11개 분류기 비교, 스태킹 앙상블 | R |
-| [turnover-logistic-ml](turnover-logistic-ml) | 회귀분석 (고려대, 2024-2) | MZ세대 공무원 이직의도 | 로지스틱 회귀, 상호작용, 이상치 진단, 머신러닝 비교 | R |
+| [datamining-stacking](datamining-stacking) | 데이터마이닝 | 분류 예측 기말 과제 | 11개 분류기 비교, 스태킹 앙상블 | R |
+| [turnover-logistic-ml](turnover-logistic-ml) | 회귀분석 | MZ세대 공무원 이직의도 | 로지스틱 회귀, 상호작용, 이상치 진단, 머신러닝 비교 | R |
 
 ## 방법 설명
 
