@@ -3,7 +3,8 @@
 분류 모형 비교, 스태킹, 로지스틱 회귀와 랜덤 포레스트 해석을 다룬 분석 코드
 
 - 대학원 과정에서 직접 작성한 분석 코드
-- 원자료, 결과 파일, 보고서 원문은 비공개
+- 원자료와 보고서 원문은 비공개
+- 실행 결과는 각 폴더의 `.md` 파일 (코드와 출력, 그림을 함께 표시)
 
 | 폴더 | 내용 | 방법 | 도구 |
 |---|---|---|---|
@@ -33,4 +34,18 @@
 - 역문항 처리, 요인 점수 계산, 신뢰도 분석 후 LASSO로 예측변수를 선택해 로지스틱 회귀 적합
 - 상호작용 항(평균 중심화)을 넣은 모형과 비교하고, 표준화 잔차와 Cook's distance로 이상치를 찾아 재분석
 - caret으로 여러 머신러닝 모형을 비교하고, 랜덤 포레스트(ranger)의 부분의존도(PDP)로 주요 변수 효과 확인
+- 실행 결과: [`01_logistic_regression.md`](turnover-logistic-ml/01_logistic_regression.md)
+
+**로지스틱 회귀 결과** (MZ세대 응답자 4,288명)
+
+| 모형 | AUC | 정확도 | AIC |
+|---|---|---|---|
+| 기본 모형 (LASSO 선택 변수) | .788 | .728 | 4802.0 |
+| 상호작용 모형 | .792 | .729 | 4776.7 |
+| 상호작용 모형, 이상치 9개 제거 | | .731 | 4704.9 |
+
+![ROC 곡선 비교](turnover-logistic-ml/01_logistic_regression_files/figure-gfm/unnamed-chunk-17-1.png)
+
+- 상호작용 항을 넣으면 AIC는 낮아지지만 판별력(AUC)은 거의 같음
+- 이상치 제거 후 Hosmer-Lemeshow 검정이 유의하지 않아(p = .479) 모형 적합 개선, 정확도는 Youden 지수 기준 분류점에서 계산
 - 이 분석의 자료로 이어 간 랜덤 포레스트와 SHAP 해석: [public-sector-turnover-shap](https://github.com/wls0kim/public-sector-turnover-shap)
