@@ -1,0 +1,405 @@
+---
+title: "MZ세대 공무원 이직의도: 로지스틱 회귀분석"
+author: "김진영"
+date: "2024-12-18"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    theme: yeti
+---
+
+- 회귀분석(2024-2) 기말 프로젝트의 첫 번째 분석
+- 2023 공직생활실태조사의 MZ세대 응답자 이직의도(있음/없음)를 로지스틱 회귀로 예측
+
+- 필요한 파일: `data.xlsx` (2023 공직생활실태조사 원자료)
+- 만드는 파일: `data_preprocessed.csv`, `data_cleaned.csv` (다음 단계 머신러닝 분석의 입력), 신뢰도와 기술통계, 상관 결과 엑셀 파일
+- 분석 순서: 전처리와 요인 점수 계산 → 신뢰도 → LASSO로 예측변수 선택 → 기본 모형 → 상호작용 모형 → 이상치 제거 후 재분석 → 진단
+
+## 1. 준비
+
+```{r setup, message = FALSE}
+library(readxl)             # 원자료 읽기
+library(writexl)            # 결과 엑셀 저장
+library(psych)              # 신뢰도, 기술통계
+library(Hmisc)              # 상관과 유의확률(rcorr)
+library(glmnet)             # LASSO
+library(pROC)               # ROC 곡선, AUC
+library(pscl)               # McFadden 유사 R²
+library(ResourceSelection)  # Hosmer-Lemeshow 적합도 검정
+library(car)                # 다중공선성(VIF)
+library(moments)            # 왜도, 첨도
+library(interactions)       # 상호작용 그래프
+library(emmeans)            # 단순 기울기 비교
+```
+
+## 2. 전처리
+
+### 2.1. 자료 불러오기와 MZ세대 선별
+
+```{r}
+data <- read_excel("data.xlsx")
+dim(data)
+
+data <- data[data$dq2 >= 1980, ]  # 출생연도(dq2) 1980년 이후를 MZ세대로 정의
+summary(data$dq2)
+
+sum(is.na(data))  # 결측치 확인
+```
+
+### 2.2. 역문항 처리
+
+- 5점 척도의 부정 방향 문항은 점수 역코딩 (1↔5, 2↔4)
+
+```{r}
+reverse_vars <- c("q8_5", "q14_4", "q19_5", "q33_5", "q33_6", "q33_7", "q33_8")
+data[reverse_vars] <- lapply(data[reverse_vars], function(x) 6 - x)
+```
+
+### 2.3. 분석 변수 만들기
+
+- 여러 문항으로 측정한 요인은 문항 평균, 단일 문항 변수는 해당 문항 그대로 사용
+- 연령과 이직의도는 별도 계산
+
+```{r}
+variable_map <- list(
+  Public_Service_Motivation            = paste0("q30_", 1:6),       # 공공봉사동기
+  Public_Sector_Values                 = paste0("q34_", 1:8),       # 공직가치
+  Public_Employee_Satisfaction         = paste0("q37_", 1:4),       # 공직만족도
+  Task_Oriented_Organizational_Culture = c("q21_1", "q21_2"),       # 과업지향 문화
+  Relationship_Oriented_Culture        = c("q21_4", "q21_8"),       # 관계지향 문화
+  Training                             = paste0("q14_", 1:4),       # 교육훈련, 능력발전
+  Average_Weekly_Working_Hours         = "dq11",                    # 주당 평균 근무시간
+  Work_Environment                     = "q2",                      # 근무환경
+  Organization_Type                    = "orgtype",                 # 기관구분
+  Institutional_Classification         = "DM1",                     # 기관유형
+  Leadership                           = paste0("q20_", 1:7),       # 리더십
+  Job_Rotation                         = paste0("q10_", 1:3),       # 배치전환
+  Change_Management                    = paste0("q23_", 1:3),       # 변화관리
+  Wages_and_Incentives                 = paste0("q11_", 1:4),       # 보수와 보상
+  Organizational_Corruption            = "q29",                     # 부정부패
+  Quality_of_Life                      = c("q39_1", "q39_2"),       # 삶의 질
+  Performance_Management_Systems       = paste0("q26_", 1:5),       # 성과관리
+  Gender                               = "DM2",                     # 성별
+  Promotion                            = paste0("q8_", 1:5),        # 승진
+  Work_Overload                        = "q31_7",                   # 업무 과중
+  Workload                             = "q1",                      # 업무량
+  Job_Performance                      = paste0("q27_", 1:3),       # 업무성과
+  Task_Performance_Competency          = paste0("q15_", 1:3),       # 업무수행역량
+  Job_Autonomy                         = paste0("q4_", 1:3),        # 업무자율성
+  Role_Conflict                        = paste0("q31_", 1:3),       # 역할갈등
+  Role_Ambiguity                       = paste0("q31_", 4:6),       # 역할모호성
+  Age                                  = function(d) 2024 - d$dq2,  # 연령
+  Average_Monthly_Salary_Level         = "dq10",                    # 월평균 급여
+  Hierarchy_Oriented_Culture           = c("q21_5", "q21_6"),       # 위계지향 문화
+  Decision_Making                      = paste0("q22_", 1:4),       # 의사결정
+  Turnover_Intention                   = function(d)                # 이직의도: 1~3점 → 0(없음), 4~5점 → 1(있음)
+    ifelse(d$q38 %in% c(1, 2, 3), 0, ifelse(d$q38 %in% c(4, 5), 1, NA)),
+  Recruitment_Method                   = "dq8",                     # 입직 경로
+  Preparation_Period                   = "dq6",                     # 입직 준비 기간
+  Number_of_Children_Under_20          = "dq4_2",                   # 자녀 수(만 20세 미만)
+  Number_of_Children_Total             = "dq4_1",                   # 자녀 수(전체)
+  Organizational_Support               = paste0("q3_", 1:3),        # 자원 제공
+  Job_Tenure                           = "dq7",                     # 재직기간
+  Professionalism                      = c("q16_1", "q16_2"),       # 전문성 수준
+  Organizational_Politics              = c("q21_11", "q21_12"),     # 조직 내 정치
+  Organizational_Cynicism              = c("q21_10", "q21_9"),      # 조직 냉소주의
+  Organizational_Goals                 = paste0("q19_", 1:5),       # 조직목표
+  Organizational_Commitment            = paste0("q35_", 1:4),       # 조직몰입
+  Organizational_Performance           = c("q25_1", "q25_2"),       # 조직성과
+  Organizational_Citizenship_Behavior  = paste0("q32_", 1:5),       # 조직시민행동
+  Job_Rank_Entry                       = "dq9_1",                   # 직급(입직 당시)
+  Job_Rank_Current                     = "dq9_2",                   # 직급(현재)
+  Job_Satisfaction                     = paste0("q36_", 1:3),       # 직무만족
+  Recruitment                          = paste0("q7_", 1:4),        # 채용
+  Educational_Level_Entry              = "dq5_1",                   # 학력(입직 당시)
+  Educational_Level_Current            = "dq5_2",                   # 학력(현재)
+  Innovation_Oriented_Culture          = c("q21_3", "q21_7"),       # 혁신지향 문화
+  Innovative_Work_Behavior             = paste0("q33_", 1:8),       # 혁신행동
+  Job_Communication                    = paste0("q24_", 1:3),       # 협업, 의사소통
+  Salary_Class_System                  = "q12",                     # 호봉제
+  Marital_Status                       = "dq3",                     # 혼인상태
+  Compensation_and_Welfare             = c("q13_1", "q13_2")        # 후생복지
+)
+
+for (v in names(variable_map)) {
+  def <- variable_map[[v]]
+  data[[v]] <- if (is.function(def))   def(data)                         # 별도 계산
+               else if (length(def) == 1) data[[def]]                    # 단일 문항
+               else rowMeans(data[, def], na.rm = TRUE)                  # 다문항 요인: 문항 평균
+}
+
+# 다문항 요인 목록 (신뢰도 분석에 사용)
+factors_list <- Filter(function(def) is.character(def) && length(def) > 1, variable_map)
+```
+
+### 2.4. 신뢰도
+
+```{r}
+alpha_results <- data.frame(
+  Factor = names(factors_list),
+  Alpha  = sapply(factors_list, function(items) psych::alpha(data[, items])$total$raw_alpha)
+)
+alpha_results
+write_xlsx(alpha_results, "Cronbach_Alpha_Results.xlsx")
+```
+
+### 2.5. 분석용 자료 정리
+
+- 요인 점수 생성 후 원래 문항과 단일 문항의 원변수 삭제
+
+```{r}
+source_cols <- unique(c(unlist(Filter(is.character, variable_map)),
+                        "dq2", "q38"))  # 연령, 이직의도의 원변수
+data_cleaned <- data[, !(colnames(data) %in% source_cols)]
+str(data_cleaned)
+
+write.csv(data,         "data_preprocessed.csv", row.names = FALSE)
+write.csv(data_cleaned, "data_cleaned.csv",      row.names = FALSE)
+```
+
+## 3. 기술통계와 상관
+
+```{r}
+numeric_data <- data_cleaned[, sapply(data_cleaned, is.numeric)]
+
+descriptive_stats <- psych::describe(numeric_data)
+write_xlsx(data.frame(Variable = rownames(descriptive_stats), descriptive_stats),
+           "Descriptive_Statistics.xlsx")
+
+correlation_results <- rcorr(as.matrix(numeric_data))
+write_xlsx(list(Correlation_Matrix = as.data.frame(correlation_results$r),
+                P_Value_Matrix     = as.data.frame(correlation_results$P)),
+           "Correlation_Results.xlsx")
+```
+
+## 4. 기본 로지스틱 회귀
+
+### 4.1. LASSO로 예측변수 선택
+
+- 이직의도 예측에 기여하는 변수를 LASSO로 선택
+- 교차검증 분할이 무작위라 시드 고정
+
+```{r}
+x <- model.matrix(Turnover_Intention ~ ., data = data_cleaned)[, -1]
+y <- data_cleaned$Turnover_Intention
+
+set.seed(1)
+lasso_cv <- cv.glmnet(x, y, alpha = 1, family = "binomial")
+lasso_cv$lambda.min  # 교차검증 오차가 가장 작은 람다
+
+final_lasso <- glmnet(x, y, alpha = 1, lambda = lasso_cv$lambda.min, family = "binomial")
+lasso_coefs <- as.matrix(coef(final_lasso))
+lasso_coefs <- data.frame(Variable = rownames(lasso_coefs), Coefficient = lasso_coefs[, "s0"])
+
+# 0이 아닌 계수를 절댓값 큰 순서로 정렬
+lasso_nonzero <- lasso_coefs[lasso_coefs$Coefficient != 0, ]
+lasso_nonzero[order(-abs(lasso_nonzero$Coefficient)), ]
+```
+
+- LASSO 결과와 이론적 근거를 함께 고려해 조직, 직무, 개인 차원의 예측변수 10개 선정
+
+```{r}
+predictors <- c(
+  # 조직 차원
+  "Organizational_Performance", "Wages_and_Incentives",
+  "Job_Communication", "Performance_Management_Systems",
+  # 직무 차원
+  "Role_Ambiguity", "Role_Conflict", "Task_Performance_Competency",
+  # 개인 차원
+  "Public_Employee_Satisfaction", "Organizational_Commitment", "Public_Sector_Values"
+)
+
+selected_cor <- rcorr(as.matrix(numeric_data[, predictors]))
+write_xlsx(list(Correlation_Matrix = as.data.frame(selected_cor$r),
+                P_Value_Matrix     = as.data.frame(selected_cor$P)),
+           "Selected_Columns_Correlation_and_PValue.xlsx")
+```
+
+### 4.2. 모형 평가 함수
+
+- 세 모형(기본, 상호작용, 이상치 제거)을 같은 기준으로 평가하기 위한 함수
+
+```{r}
+# 회귀계수와 오즈비
+coef_table <- function(model) {
+  b <- coef(model)
+  data.frame(Variable = names(b), Coefficient = b, Odds_Ratio = exp(b))
+}
+
+# ROC 곡선, Youden 지수 기준 최적 분류점, 혼동행렬과 분류 지표
+classification_report <- function(model, outcome) {
+  probs <- predict(model, type = "response")
+  roc_curve <- roc(outcome, probs)
+  par(mar = c(4, 4, 2, 2))
+  plot(roc_curve, main = "ROC Curve")
+
+  cutoff <- as.numeric(coords(roc_curve, "best", ret = "threshold")[1])
+  cat("Optimal cut-off: ", cutoff, "\n")
+  cm <- table(Classified = ifelse(probs > cutoff, 1, 0), Actual = outcome)
+  print(cm)
+
+  TP <- cm[2, 2]; TN <- cm[1, 1]; FP <- cm[2, 1]; FN <- cm[1, 2]
+  cat("Accuracy:    ", round((TP + TN) / sum(cm), 4), "\n")
+  cat("Sensitivity: ", round(TP / (TP + FN), 4), "\n")  # 민감도
+  cat("Specificity: ", round(TN / (TN + FP), 4), "\n")  # 특이도
+  cat("FPR:         ", round(FP / (FP + TN), 4), "\n")  # 위양성률
+  cat("FNR:         ", round(FN / (FN + TP), 4), "\n")  # 위음성률
+}
+
+# 정보 기준, 유사 R², Hosmer-Lemeshow 검정
+fit_report <- function(model, outcome) {
+  cat("AIC: ", AIC(model), "\n")
+  cat("BIC: ", BIC(model), "\n")
+  cat("Pseudo R2: ", pR2(model), "\n")
+  cat("Hosmer-Lemeshow p: ", hoslem.test(outcome, fitted(model))$p.value, "\n")
+}
+```
+
+### 4.3. 모형 적합
+
+```{r}
+model <- glm(reformulate(predictors, "Turnover_Intention"),
+             data = data_cleaned, family = binomial())
+summary(model)
+coef_table(model)
+```
+
+```{r}
+classification_report(model, data_cleaned$Turnover_Intention)
+fit_report(model, data$Turnover_Intention)
+```
+
+### 4.4. 예측변수와 예측확률의 관계
+
+- 적합도가 낮은 원인을 찾기 위해 예측변수별 예측확률 시각화
+
+```{r, fig.width = 10, fig.height = 12}
+probs <- predict(model, type = "response")
+par(mfrow = c(4, 3))
+for (v in predictors) {
+  plot(data_cleaned[[v]], probs, main = v, xlab = v, ylab = "Predicted Prob")
+}
+par(mfrow = c(1, 1))
+```
+
+## 5. 상호작용 모형
+
+### 5.1. 평균 중심화와 상호작용 항
+
+- 다중공선성을 줄이기 위해 예측변수를 평균 중심화한 뒤 상호작용 항 생성
+
+```{r}
+for (v in predictors) {
+  data_cleaned[[paste0("c_", v)]] <- as.numeric(scale(data_cleaned[[v]], center = TRUE, scale = FALSE))
+}
+
+data_cleaned$Interaction_OP_PMS  <- data_cleaned$c_Organizational_Performance   * data_cleaned$c_Performance_Management_Systems  # 조직성과 × 성과관리
+data_cleaned$Interaction_RA_RC   <- data_cleaned$c_Role_Ambiguity               * data_cleaned$c_Role_Conflict                   # 역할모호성 × 역할갈등
+data_cleaned$Interaction_PES_PSV <- data_cleaned$c_Public_Employee_Satisfaction * data_cleaned$c_Public_Sector_Values            # 공직만족 × 공직가치
+
+interaction_formula <- reformulate(
+  c(paste0("c_", predictors), "Interaction_OP_PMS", "Interaction_RA_RC", "Interaction_PES_PSV"),
+  "Turnover_Intention"
+)
+```
+
+### 5.2. 모형 적합
+
+```{r}
+model_interaction <- glm(interaction_formula, data = data_cleaned, family = binomial())
+summary(model_interaction)
+coef_table(model_interaction)
+```
+
+```{r}
+classification_report(model_interaction, data_cleaned$Turnover_Intention)
+fit_report(model_interaction, data$Turnover_Intention)
+```
+
+### 5.3. 상호작용 해석
+
+```{r}
+interact_plot(model_interaction, pred = c_Organizational_Performance,
+              modx = c_Performance_Management_Systems, plot.points = TRUE,
+              main.title = "조직성과와 성과관리시스템의 상호작용")
+interact_plot(model_interaction, pred = c_Public_Employee_Satisfaction,
+              modx = c_Public_Sector_Values, plot.points = TRUE,
+              main.title = "공직만족도와 공직가치의 상호작용")
+interact_plot(model_interaction, pred = c_Role_Ambiguity,
+              modx = c_Role_Conflict, plot.points = TRUE,
+              main.title = "역할모호성과 역할갈등의 상호작용")
+
+# 조절변수 수준별 단순 기울기 비교
+emtrends(model_interaction, pairwise ~ c_Performance_Management_Systems, var = "c_Organizational_Performance")
+emtrends(model_interaction, pairwise ~ c_Public_Employee_Satisfaction,   var = "c_Public_Sector_Values")
+```
+
+## 6. 기본 모형과 상호작용 모형 비교
+
+```{r}
+anova(model, model_interaction, test = "Chisq")  # 이탈도 차이 검정
+
+roc_base        <- roc(data_cleaned$Turnover_Intention, predict(model, type = "response"))
+roc_interaction <- roc(data_cleaned$Turnover_Intention, predict(model_interaction, type = "response"))
+cat("Base Model AUC: ",        auc(roc_base), "\n")
+cat("Interaction Model AUC: ", auc(roc_interaction), "\n")
+
+plot(roc_base, col = "blue", main = "ROC Curve Comparison")
+plot(roc_interaction, col = "red", add = TRUE)
+legend("bottomright", legend = c("Base Model", "Interaction Model"),
+       col = c("blue", "red"), lwd = 2)
+```
+
+## 7. 이상치 탐지
+
+- 표준화 잔차(|z| > 2.5)와 Cook's distance(4 / (n - k - 1) 초과)를 모두 넘는 사례를 이상치로 판단
+
+```{r}
+std_resid <- rstandard(model_interaction)
+outliers_resid <- which(abs(std_resid) > 2.5)
+outliers_resid
+plot(std_resid, ylab = "Standardized Residuals", main = "Standardized Residuals Plot")
+abline(h = c(-2.5, 2.5), col = "red", lty = 2)
+
+n <- nrow(data_cleaned)
+k <- length(coef(model_interaction)) - 1
+cooksd <- cooks.distance(model_interaction)
+cook_threshold <- 4 / (n - k - 1)
+outliers_cook <- which(cooksd > cook_threshold)
+outliers_cook
+plot(cooksd, ylab = "Cook's Distance", main = "Cook's Distance Plot")
+abline(h = cook_threshold, col = "red", lty = 2)
+
+common_outliers <- intersect(outliers_resid, outliers_cook)  # 두 기준 모두에 해당하는 사례
+common_outliers
+```
+
+## 8. 이상치 제거 후 재분석
+
+```{r}
+data_no_outliers <- data_cleaned[-common_outliers, ]
+
+final_model <- glm(interaction_formula, data = data_no_outliers, family = binomial())
+summary(final_model)
+coef_table(final_model)
+```
+
+```{r}
+classification_report(final_model, data_no_outliers$Turnover_Intention)
+fit_report(final_model, data_no_outliers$Turnover_Intention)
+```
+
+## 9. 최종 모형 진단
+
+```{r}
+rds <- residuals(final_model)
+plot(rds)
+lines(lowess(rds))
+
+cat("Skewness: ", skewness(rds), "\n")  # 잔차 왜도
+cat("Kurtosis: ", kurtosis(rds), "\n")  # 잔차 첨도
+
+vif(final_model)  # 다중공선성
+```

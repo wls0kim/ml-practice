@@ -1,0 +1,264 @@
+---
+title: "데이터마이닝 기말 과제: 분류 모형 11개 비교와 스태킹"
+author: "김진영"
+date: "2023-12-19"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    theme: yeti
+---
+
+- 데이터마이닝(2023-2, 중앙대) 기말 과제
+- 학습 자료(3,000명, 예측변수 80개)로 이진 분류 모형 개발, 시험 자료(300명) 결과 예측
+- 결과 범주 불균형(No 2,713 : Yes 287)에 따라 SMOTE와 분류 기준값 조정 병행
+
+- 필요한 파일: `DM2023F.XYtrain.csv`, `DM2023F.Xtest.csv` (수업 제공 자료)
+- `sampling = "smote"` 사용 시 `themis` 패키지 필요
+- 순서: 개별 모형 11개(교차검증 튜닝 → 균형 정확도가 가장 높은 기준값 선택) → 같은 폴드로 학습한 모형들의 스태킹 → 메타 학습기 11종 비교
+
+## 1. 준비
+
+```{r setup, message = FALSE}
+library(caret)          # 학습, 튜닝, 기준값 탐색(thresholder)
+library(caretEnsemble)  # caretList, caretEnsemble, caretStack
+library(doParallel)
+library(MASS); library(glmnet); library(e1071); library(randomForest)
+library(naivebayes); library(xgboost)
+
+registerDoParallel(detectCores())
+```
+
+```{r}
+train_data <- read.csv("DM2023F.XYtrain.csv")  # 마지막 열 y가 결과변수 (No / Yes)
+test_data  <- read.csv("DM2023F.Xtest.csv")    # 첫 열 ID, 결과변수 없음
+
+dim(train_data); dim(test_data)
+sum(is.na(train_data)); sum(is.na(test_data))
+table(train_data$y)
+
+x.train <- train_data[, setdiff(names(train_data), "y")]
+y.train <- factor(train_data$y)
+x.test  <- test_data[, setdiff(names(test_data), "ID")]
+```
+
+## 2. 개별 모형
+
+### 2.1. 공통 설정
+
+```{r}
+set.seed(1)
+myControl <- trainControl(method = "repeatedcv", number = 10, repeats = 5,  # 10겹 교차검증 5회 반복
+                          classProbs = TRUE, summaryFunction = twoClassSummary,
+                          sampling = "smote",          # 학습 폴드 안에서 소수 클래스 합성
+                          savePredictions = "final",   # 기준값 탐색에 쓸 교차검증 예측 저장
+                          allowParallel = TRUE)
+
+# 교차검증 예측으로 기준값 0.05~0.95를 시험해 균형 정확도가 가장 높은 값을 고르고,
+# 그 기준값으로 학습 자료 혼동행렬과 시험 자료 예측 산출
+# 확률은 첫 번째 범주("No") 기준: "No" 확률이 기준값보다 크면 No
+evaluate_with_threshold <- function(fit) {
+  thr_table <- thresholder(fit, threshold = seq(0.05, 0.95, by = 0.05), final = TRUE)
+  best <- thr_table[which.max(thr_table$`Balanced Accuracy`), ]
+  print(best)
+  thr <- best$prob_thresh
+
+  classify <- function(newdata) {
+    prob_no <- predict(fit, newdata = newdata, type = "prob")[, "No"]
+    factor(ifelse(prob_no > thr, "No", "Yes"), levels = c("No", "Yes"))
+  }
+  print(confusionMatrix(classify(x.train), y.train, positive = "Yes"))  # 학습 자료 성능
+  list(threshold = thr, test_pred = classify(x.test))                   # 시험 자료 예측
+}
+```
+
+### 2.2. kNN
+
+```{r}
+set.seed(1)
+knn_fit <- train(x.train, y.train, method = "knn", trControl = myControl,
+                 tuneGrid = data.frame(k = 1:20), preProcess = c("center", "scale"),
+                 metric = "ROC")
+knn_fit$bestTune
+knn_res <- evaluate_with_threshold(knn_fit)
+```
+
+### 2.3. 나이브 베이즈
+
+```{r}
+set.seed(1)
+nb_fit <- train(x.train, y.train, method = "naive_bayes", trControl = myControl, metric = "ROC")
+nb_fit
+nb_res <- evaluate_with_threshold(nb_fit)
+```
+
+### 2.4. 로지스틱 회귀
+
+- `method = "glm"`에 `family = binomial`을 명시한 모형과 기본값 모형을 각각 적합
+- 결과변수가 범주형이면 caret이 binomial을 자동 적용하므로 두 모형은 동일
+
+```{r}
+set.seed(1)
+lg_fit <- train(x.train, y.train, method = "glm", family = binomial,
+                trControl = myControl, metric = "ROC")
+summary(lg_fit)
+lg_res <- evaluate_with_threshold(lg_fit)
+
+set.seed(1)
+glm_fit <- train(x.train, y.train, method = "glm", trControl = myControl, metric = "ROC")
+glm_res <- evaluate_with_threshold(glm_fit)
+```
+
+### 2.5. Elastic Net
+
+```{r}
+set.seed(1)
+en_grid <- expand.grid(alpha = seq(0, 1, by = 0.05), lambda = seq(0, 5, length = 100))
+en_fit <- train(x.train, y.train, method = "glmnet", trControl = myControl,
+                tuneGrid = en_grid, preProcess = c("center", "scale"), metric = "ROC")
+en_fit$bestTune
+coef(en_fit$finalModel, s = en_fit$finalModel$lambdaOpt)
+en_res <- evaluate_with_threshold(en_fit)
+```
+
+### 2.6. 선형, 이차 판별분석
+
+```{r}
+set.seed(1)
+lda_fit <- train(x.train, y.train, method = "lda", trControl = myControl, metric = "ROC")
+lda_res <- evaluate_with_threshold(lda_fit)
+
+set.seed(1)
+qda_fit <- train(x.train, y.train, method = "qda", trControl = myControl, metric = "ROC")
+qda_res <- evaluate_with_threshold(qda_fit)
+```
+
+### 2.7. SVM
+
+- SVM: `e1071::tune()`의 10겹 교차검증으로 비용(C)과 감마 탐색
+- `tune()`은 caret의 `trControl`, SMOTE를 쓰지 않음
+- `epsilon`은 회귀용 모수라 분류 결과에 영향 없음
+
+```{r}
+svm_tune <- function(kernel, ranges) {
+  set.seed(1)
+  tuned <- tune(svm, x.train, y.train, kernel = kernel, ranges = ranges, probability = TRUE)
+  print(tuned)
+  best <- tuned$best.model
+  print(confusionMatrix(predict(best, newdata = x.train), y.train, positive = "Yes"))
+  list(model = best, test_pred = predict(best, newdata = x.test))
+}
+
+svm_lin <- svm_tune("linear",     list(epsilon = seq(0, 1, 0.1), cost = 10^seq(-2, 1, length = 5)))
+svm_rad <- svm_tune("radial",     list(epsilon = seq(0, 1, 0.2), cost = 10^seq(-2, 1, length = 5),
+                                       gamma = seq(0, 1, 0.2)))
+svm_pol <- svm_tune("polynomial", list(epsilon = seq(0, 1, 0.2), cost = 10^seq(-2, 1, length = 5),
+                                       gamma = seq(0, 1, 0.2)))
+```
+
+### 2.8. 랜덤 포레스트
+
+```{r}
+set.seed(1)
+rf_fit <- train(x.train, y.train, method = "rf", trControl = myControl,
+                tuneGrid = expand.grid(mtry = seq(1, 50, by = 5)),
+                preProcess = c("center", "scale"))
+rf_fit$bestTune
+rf_res <- evaluate_with_threshold(rf_fit)
+```
+
+### 2.9. XGBoost
+
+```{r}
+set.seed(1)
+xgb_fit <- train(x.train, y.train, method = "xgbTree", trControl = myControl,
+                 tuneLength = 30, preProcess = c("center", "scale"))
+xgb_fit$bestTune
+xgb_res <- evaluate_with_threshold(xgb_fit)
+```
+
+## 3. 스태킹
+
+### 3.1. 같은 폴드로 기본 모형 학습
+
+- 스태킹은 기본 모형들의 교차검증 예측을 입력으로 쓰므로 모든 모형이 같은 폴드를 쓰도록 `index` 고정 (10겹 교차검증 1회)
+
+```{r}
+set.seed(1)
+my_folds <- createFolds(train_data$y, k = 10, returnTrain = TRUE)
+stack_control <- trainControl(method = "cv", number = 10,
+                              index = my_folds, savePredictions = "all",
+                              classProbs = TRUE, summaryFunction = twoClassSummary,
+                              sampling = "smote", allowParallel = TRUE)
+
+model_list <- c("knn", "naive_bayes", "glm", "glmnet", "lda", "qda",
+                "svmLinear", "svmRadial", "svmPoly", "rf", "xgbTree")
+
+fit <- caretList(y ~ ., data = train_data, methodList = model_list,
+                 trControl = stack_control, metric = "ROC",
+                 preProcess = c("center", "scale"))
+fit
+lapply(fit, function(m) m$bestTune)
+
+# 학습 자료 정확도 ("Yes" 확률 0.5 이상이면 Yes)
+train_prob_yes <- sapply(fit, function(m) predict(m, newdata = x.train, type = "prob")[, "Yes"])
+round(apply(train_prob_yes >= 0.5, 2, function(p) mean(ifelse(p, "Yes", "No") == train_data$y)), 4)
+```
+
+### 3.2. 기본 모형 비교
+
+```{r}
+rs <- resamples(fit)
+summary(rs)
+modelCor(rs, metric = "ROC")   # 예측 상관이 낮은 모형끼리 묶을수록 스태킹 이득이 큼
+dotplot(rs, metric = "ROC")
+
+# 메타 학습기의 입력이 되는 1단계 자료: 모형별 교차검증 "No" 확률
+lev1_data <- sapply(fit, function(m) {
+  p <- m$pred
+  p <- p[p$rowIndex %in% seq_len(nrow(train_data)), ]
+  p <- p[order(p$rowIndex), ]
+  p$No
+})
+head(lev1_data)
+```
+
+### 3.3. 메타 학습기별 스태킹
+
+```{r}
+# 스태킹 모형의 예측 범주
+# caretEnsemble 2.x는 범주, 4.x는 범주별 확률표를 반환하므로 두 경우 모두 처리
+stack_class <- function(model, newdata) {
+  p <- predict(model, newdata = newdata)
+  if (is.data.frame(p)) p <- ifelse(p$Yes >= 0.5, "Yes", "No")
+  factor(p, levels = c("No", "Yes"))
+}
+
+# 메타 학습기를 바꿔 가며 스태킹하고 학습 자료 성능과 시험 자료 예측을 반환
+stack_with <- function(method, ...) {
+  st <- caretStack(fit, method = method, metric = "ROC", trControl = stack_control, ...)
+  print(st)
+  print(confusionMatrix(stack_class(st, x.train), y.train, positive = "Yes"))
+  list(model = st, test_pred = stack_class(st, x.test))
+}
+
+# 가중 평균 (caretEnsemble 기본: glm 메타 학습기)
+ens <- caretEnsemble(fit, metric = "ROC", trControl = stack_control)
+summary(ens)
+confusionMatrix(stack_class(ens, x.train), y.train, positive = "Yes")
+
+stacks <- list(
+  knn       = stack_with("knn", tuneGrid = data.frame(k = 1:20)),
+  nb        = stack_with("naive_bayes"),
+  logistic  = stack_with("glm", family = binomial),
+  glmnet    = stack_with("glmnet", tuneGrid = en_grid),
+  lda       = stack_with("lda"),
+  qda       = stack_with("qda"),
+  svmLinear = stack_with("svmLinear"),
+  svmRadial = stack_with("svmRadial"),
+  svmPoly   = stack_with("svmPoly"),
+  rf        = stack_with("rf", tuneGrid = expand.grid(mtry = seq(1, 50, by = 5))),
+  xgb       = stack_with("xgbTree", tuneLength = 30)
+)
+```
