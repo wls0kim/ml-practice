@@ -202,7 +202,6 @@ cm
     ##       Balanced Accuracy : 0.7260               
     ##                                                
     ##        'Positive' Class : Yes                  
-    ## 
 
 ``` r
 TP <- cm$table[2, 2]; TN <- cm$table[1, 1]; FP <- cm$table[2, 1]; FN <- cm$table[1, 2]

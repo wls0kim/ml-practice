@@ -34,7 +34,7 @@
 - 역문항 처리, 요인 점수 계산, 신뢰도 분석 후 LASSO로 예측변수를 선택해 로지스틱 회귀 적합
 - 상호작용 항(평균 중심화)을 넣은 모형과 비교하고, 표준화 잔차와 Cook's distance로 이상치를 찾아 재분석
 - caret으로 여러 머신러닝 모형을 비교하고, 랜덤 포레스트(ranger)의 부분의존도(PDP)로 주요 변수 효과 확인
-- 실행 결과: [`01_logistic_regression.md`](turnover-logistic-ml/01_logistic_regression.md), [`03_ranger_pdp.md`](turnover-logistic-ml/03_ranger_pdp.md)
+- 실행 결과: [`01_logistic_regression.md`](turnover-logistic-ml/01_logistic_regression.md), [`02_ml_model_comparison.md`](turnover-logistic-ml/02_ml_model_comparison.md), [`03_ranger_pdp.md`](turnover-logistic-ml/03_ranger_pdp.md)
 
 **로지스틱 회귀 결과** (MZ세대 응답자 4,288명)
 
@@ -48,6 +48,26 @@
 
 - 상호작용 항을 넣으면 AIC는 낮아지지만 판별력(AUC)은 거의 같음
 - 이상치 제거 후 Hosmer-Lemeshow 검정이 유의하지 않아(p = .479) 모형 적합 개선, 정확도는 Youden 지수 기준 분류점에서 계산
+
+**머신러닝 모형 15개 비교** (학습 3,217명, 평가 1,071명, 학습 폴드 안에서 SMOTE)
+
+| 모형 | 교차검증 ROC 평균 | 평가 정확도 (기준 .5) |
+|---|---|---|
+| ranger | .831 | .721 |
+| gbm | .825 | .711 |
+| 랜덤 포레스트(rf) | .825 | .719 |
+| XGBoost | .824 | .712 |
+| C5.0 | .820 | .723 |
+| SVM(방사형) | .815 | .721 |
+| SVM(다항) | .808 | .727 |
+| glmnet | .804 | .726 |
+| 로지스틱 회귀(glm) | .801 | .715 |
+| kNN | .745 | .627 |
+
+![교차검증 ROC 비교](turnover-logistic-ml/02_ml_model_comparison_files/figure-gfm/unnamed-chunk-6-1.png)
+
+- 트리 기반 앙상블(ranger, gbm, rf, XGBoost)의 교차검증 ROC가 높고, 평가 자료 정확도는 선형 모형과 큰 차이 없음 (.71~.73)
+- 표에는 15개 중 10개만 표시, 전체는 실행 결과 파일 참고
 
 **랜덤 포레스트(ranger) 결과** (학습 3,217명, 평가 1,071명)
 
