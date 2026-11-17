@@ -1,15 +1,3 @@
----
-title: "MZ세대 공무원 이직의도: 로지스틱 회귀분석"
-author: "김진영"
-date: "2024-12-18"
-output:
-  html_document:
-    toc: true
-    toc_depth: 3
-    toc_float: true
-    theme: yeti
----
-
 - 회귀분석(2024-2) 기말 프로젝트의 첫 번째 분석
 - 2023 공직생활실태조사의 MZ세대 응답자 이직의도(있음/없음)를 로지스틱 회귀로 예측
 

@@ -1,15 +1,3 @@
----
-title: "MZ세대 공무원 이직의도: 머신러닝 모형 비교"
-author: "김진영"
-date: "2024-12-18"
-output:
-  html_document:
-    toc: true
-    toc_depth: 3
-    toc_float: true
-    theme: yeti
----
-
 - 회귀분석(2024-2) 기말 프로젝트의 두 번째 분석
 - 로지스틱 회귀와 같은 자료로 머신러닝 분류 모형 15개의 이직의도 예측 성능 비교
 
